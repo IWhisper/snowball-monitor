@@ -1,0 +1,50 @@
+name: Xueqiu Monitor
+
+on:
+  workflow_dispatch:      # 允许手动点击运行
+  schedule:
+    # -----------------------------------------------------------
+    # 方案 A：分段运行策略 (注意：GitHub 使用 UTC 时间，比北京慢8小时)
+    # -----------------------------------------------------------
+    
+    # 1. 交易日模式：周一到周五 (UTC)
+    # 对应北京时间：周一 08:00 -> 周六 08:00
+    # 涵盖：A股、港股全天 + 美股全天 (含周五晚美股)
+    - cron: '*/20 * * * 1-5'
+    
+    # 2. 交易日收盘前高频检查 (UTC)
+    # A股收盘前: 06:45, 06:50, 06:55 (14:45-14:55 CST)
+    # 港股收盘前: 07:45, 07:50, 07:55 (15:45-15:55 CST)
+    - cron: '45,50,55 6,7 * * 1-5'
+
+    # 3. 周末模式：周六、周日 (UTC)
+    # 对应北京时间：周六 08:00 -> 周一 08:00
+    # 市场休市，每 6 小时运行一次保活 (02:00, 08:00, 14:00, 20:00)
+    - cron: '0 */6 * * 0,6'
+
+jobs:
+  run-monitor:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+          
+      - name: Install dependencies
+        run: pip install requests
+        
+      - name: Run script
+        # ⚠️ 请确认您的脚本文件名
+        env:
+          # 把 GitHub 的 Secret 赋值给名为 BARK_KEY 的环境变量
+          BARK_KEY: ${{ secrets.BARK_KEY }}
+          UPSTASH_REDIS_REST_URL: ${{ secrets.UPSTASH_REDIS_REST_URL }}
+          UPSTASH_REDIS_REST_TOKEN: ${{ secrets.UPSTASH_REDIS_REST_TOKEN }}
+          XUEQIU_COOKIE: ${{ secrets.XUEQIU_COOKIE }}
+          XUEQIU_CUBES: ${{ secrets.XUEQIU_CUBES }}
+        run: python fetch_rebalancing.py
