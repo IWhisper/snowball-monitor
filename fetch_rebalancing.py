@@ -158,7 +158,16 @@ def monitor_one_cube(symbol, full_name, saved_data):
                         cube_name = full_name
                         header_line = f"📦组合: {full_name}"
                     
-                    title = f"调仓-{cube_name}"
+                    # --- [修改] 状态判定 ---
+                    status = latest_trade.get('status', 'unknown')
+                    status_map = {
+                        'success': '✅[成功]',
+                        'failed': '❌[失败]',
+                        'pending': '⏳[待成交]'
+                    }
+                    status_str = status_map.get(status, f'[{status}]')
+                    
+                    title = f"{status_str}调仓-{cube_name}"
 
                     # --- [新增] 解析调仓时间 (北京时间) ---
                     created_at = latest_trade.get('created_at')
@@ -172,7 +181,7 @@ def monitor_one_cube(symbol, full_name, saved_data):
                     # --- 2. 构造消息行 ---
                     msg_lines = []
                     msg_lines.append(header_line)
-                    msg_lines.append(f"⏰时间: {time_str}") # <--- 把时间加在这里
+                    msg_lines.append(f"⏰时间(北京): {time_str}")
                     msg_lines.append("------------------")
                     
                     stocks = latest_trade.get('rebalancing_histories', [])
