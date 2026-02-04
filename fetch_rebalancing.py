@@ -159,30 +159,21 @@ def monitor_one_cube(symbol, full_name, saved_data):
                         cube_name = full_name
                         header_line = f"📦组合: {full_name}"
                     
-                    # --- [修改] 状态判定 ---
+                    # --- 状态判定 ---
                     category = latest_trade.get('category', 'unknown')
                     status = latest_trade.get('status', 'unknown')
                     
                     if category == 'sys_rebalancing':
-                        # 系统调仓 (分红/送配)
                         status_str = '⚙️[系统]'
                     elif category == 'user_rebalancing':
-                        # 主动调仓：进一步判断状态
-                        if status == 'success':
-                            status_str = '✅[成功]'
-                        elif status == 'failed':
-                            status_str = '❌[失败]'
-                        elif status == 'pending':
-                            status_str = '⏳[待成交]'
-                        else:
-                            status_str = f'[{status}]'
+                        status_map = {'success': '✅[成功]', 'failed': '❌[失败]', 'pending': '⏳[待成交]'}
+                        status_str = status_map.get(status, f'[{status}]')
                     else:
-                         # 未知类型
-                         status_str = '❓[未知]'
+                        status_str = '❓[未知]'
                     
                     title = f"{status_str}调仓-{cube_name}"
 
-                    # --- [新增] 解析调仓时间 (北京时间) ---
+                    # --- 解析调仓时间 (北京时间) ---
                     created_at = latest_trade.get('created_at')
                     if created_at:
                         # 毫秒转秒，并加8小时(28800秒)转为北京时间，防止GitHub服务器时区差异
@@ -216,9 +207,9 @@ def monitor_one_cube(symbol, full_name, saved_data):
                     if len(msg_lines) > 3 or category == 'sys_rebalancing' or '❓' in status_str:
                         # 特殊备注
                         if category == 'sys_rebalancing':
-                            msg_lines.append("(系统自动触发，非主理人操作)")
+                            msg_body += "\n(系统自动触发，非主理人操作)"
                         elif '❓' in status_str:
-                            msg_lines.append(f"(发现新类型: {category}，请人工检查)")
+                            msg_body += f"\n(发现新类型: {category}，请人工检查)"
                         
                         send_bark(title, msg_body, symbol)
                     else:
