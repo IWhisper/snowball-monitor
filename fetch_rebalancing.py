@@ -2,6 +2,7 @@ import requests
 import json
 import os
 import time
+import sys
 
 # --- 配置区域 ---
 def load_cube_config():
@@ -9,13 +10,13 @@ def load_cube_config():
     config_str = os.environ.get("XUEQIU_CUBES")
     if not config_str:
         print("⚠️ 警告：未检测到 XUEQIU_CUBES 环境变量，将无法监控任何组合")
-        return {}
+        exit(1) # 强制阻断
     
     try:
         return json.loads(config_str)
     except json.JSONDecodeError:
         print("❌ 错误：XUEQIU_CUBES 格式无效，请检查是否为标准 JSON")
-        return {}
+        exit(1) # 强制阻断
 
 # --- 配置初始化 ---
 CUBE_DICT = load_cube_config()
@@ -159,13 +160,25 @@ def monitor_one_cube(symbol, full_name, saved_data):
                         header_line = f"📦组合: {full_name}"
                     
                     # --- [修改] 状态判定 ---
+                    category = latest_trade.get('category', 'unknown')
                     status = latest_trade.get('status', 'unknown')
-                    status_map = {
-                        'success': '✅[成功]',
-                        'failed': '❌[失败]',
-                        'pending': '⏳[待成交]'
-                    }
-                    status_str = status_map.get(status, f'[{status}]')
+                    
+                    if category == 'sys_rebalancing':
+                        # 系统调仓 (分红/送配)
+                        status_str = '⚙️[系统]'
+                    elif category == 'user_rebalancing':
+                        # 主动调仓：进一步判断状态
+                        if status == 'success':
+                            status_str = '✅[成功]'
+                        elif status == 'failed':
+                            status_str = '❌[失败]'
+                        elif status == 'pending':
+                            status_str = '⏳[待成交]'
+                        else:
+                            status_str = f'[{status}]'
+                    else:
+                         # 未知类型
+                         status_str = '❓[未知]'
                     
                     title = f"{status_str}调仓-{cube_name}"
 
@@ -200,7 +213,13 @@ def monitor_one_cube(symbol, full_name, saved_data):
                     
                     # --- 4. 发送逻辑 (Bark) ---
                     # 判断依据：除了表头(3行:主理人+时间+分割线)之外，有没有变动？
-                    if len(msg_lines) > 3:
+                    if len(msg_lines) > 3 or category == 'sys_rebalancing' or '❓' in status_str:
+                        # 特殊备注
+                        if category == 'sys_rebalancing':
+                            msg_lines.append("(系统自动触发，非主理人操作)")
+                        elif '❓' in status_str:
+                            msg_lines.append(f"(发现新类型: {category}，请人工检查)")
+                        
                         send_bark(title, msg_body, symbol)
                     else:
                         # 只有表头，说明全是微调
