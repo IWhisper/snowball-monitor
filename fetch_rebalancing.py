@@ -146,10 +146,19 @@ def monitor_one_cube(symbol, full_name, saved_data):
             if 'list' in data and len(data['list']) > 0:
                 latest_trade = data['list'][0]
                 current_id = str(latest_trade['id'])
-                last_id = saved_data.get(symbol, "")
+                current_status = latest_trade.get('status', 'unknown')
                 
-                if current_id != last_id:
-                    print(f"[{full_name}] 发现新调仓！")
+                # --- [读] 读取上次状态 ---
+                saved_record = saved_data.get(symbol, {})
+                last_id = saved_record.get('id', "")
+                last_status = saved_record.get('status', 'unknown')
+                
+                # --- [判] ID变动 或 状态变动 (仅当ID一致时才对比状态) ---
+                is_new_trade = (current_id != last_id)
+                is_status_update = (current_id == last_id and current_status != last_status)
+                
+                if is_new_trade or is_status_update:
+                    print(f"[{full_name}] 发现更新: {current_id} ({current_status})")
                     
                     # --- 1. 统一处理标题和表头 ---
                     if " - " in full_name:
@@ -161,7 +170,7 @@ def monitor_one_cube(symbol, full_name, saved_data):
                     
                     # --- 状态判定 ---
                     category = latest_trade.get('category', 'unknown')
-                    status = latest_trade.get('status', 'unknown')
+                    status = current_status # 使用已获取的变量
                     
                     if category == 'sys_rebalancing':
                         status_str = '⚙️[系统]'
@@ -203,13 +212,15 @@ def monitor_one_cube(symbol, full_name, saved_data):
                     msg_body = "\n".join(msg_lines)
                     
                     # --- 4. 发送逻辑 (Bark) ---
-                    # 判断依据：除了表头(3行:主理人+时间+分割线)之外，有没有变动？
-                    if len(msg_lines) > 3 or category == 'sys_rebalancing' or '❓' in status_str:
+                    # 判断依据：除了表头(3行)之外有变动，或者特殊类别，或者状态发生变更(pending->success)
+                    if len(msg_lines) > 3 or category == 'sys_rebalancing' or '❓' in status_str or is_status_update:
                         # 特殊备注
                         if category == 'sys_rebalancing':
                             msg_body += "\n(系统自动触发，非主理人操作)"
                         elif '❓' in status_str:
                             msg_body += f"\n(发现新类型: {category}，请人工检查)"
+                        elif is_status_update:
+                             msg_body += f"\n(状态更新: {last_status} -> {current_status})"
                         
                         send_bark(title, msg_body, symbol)
                     else:
@@ -220,8 +231,11 @@ def monitor_one_cube(symbol, full_name, saved_data):
                     latest_trade['summary_text'] = msg_body
                     log_history_to_db(symbol, latest_trade)
                     
-                    # 更新 ID
-                    saved_data[symbol] = current_id
+                    # 更新状态 (存储 Dict)
+                    saved_data[symbol] = {
+                        'id': current_id,
+                        'status': current_status
+                    }
                     save_data_to_db(DB_KEY_STATUS, saved_data)
                 else:
                     print(f"[{full_name}] 无新调仓")
