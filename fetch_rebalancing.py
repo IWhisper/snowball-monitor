@@ -28,7 +28,7 @@ DB_KEY_STATUS = 'xueqiu:status:last_ids'
 HISTORY_LIMIT = 200
 
 # Cookie 失效报警间隔 (3天)
-COOKIE_ALERT_INTERVAL = 259200 
+COOKIE_ALERT_INTERVAL = 86400 
 
 # --- 环境变量获取 ---
 COOKIE_STR = os.environ.get("XUEQIU_COOKIE")
@@ -125,13 +125,16 @@ def log_history_to_db(symbol, trade_detail):
 
 def check_cookie_status(status_code, saved_data):
     if status_code in [400, 401, 403]:
+        print(f"❌ [Cookie检查] 请求被拒绝，HTTP状态码: {status_code}")
         last_alert = saved_data.get('last_cookie_alert_time', 0)
         now = time.time()
         if now - last_alert > COOKIE_ALERT_INTERVAL:
-            print("Cookie失效")
-            send_bark("雪球监控警告", "Cookie似乎失效了，请更新 Secrets", "ZH000000")
+            print("⚠️ 触发 Cookie 失效报警...")
+            send_bark("雪球监控警告", f"Cookie似乎失效了(HTTP {status_code})，请更新 Secrets")
             saved_data['last_cookie_alert_time'] = now
             return False
+        else:
+            print("ℹ️ 报警冷却中，跳过发送通知")
         return False
     return True
 
@@ -139,7 +142,8 @@ def monitor_one_cube(symbol, full_name, saved_data):
     url = f"https://xueqiu.com/cubes/rebalancing/history.json?cube_symbol={symbol}&count=1&page=1"
     try:
         resp = requests.get(url, headers=HEADERS, timeout=10)
-        if not check_cookie_status(resp.status_code, saved_data): return 
+        if not check_cookie_status(resp.status_code, saved_data): 
+            return False # Cookie 失效，返回 False
         
         if resp.status_code == 200:
             data = resp.json()
@@ -239,19 +243,31 @@ def monitor_one_cube(symbol, full_name, saved_data):
                     save_data_to_db(DB_KEY_STATUS, saved_data)
                 else:
                     print(f"[{full_name}] 无新调仓")
+        return True # 成功执行
+        
     except Exception as e:
         print(f"[{full_name}] 运行出错: {e}")
+        return True # 异常不因单个失败而中断整体（除非是Cookie问题）
 
 def main():
     # 读取去重状态
     saved_data = get_data_from_db(DB_KEY_STATUS)
     
+    auth_failed = False
     for symbol, name in CUBE_DICT.items():
-        monitor_one_cube(symbol, name, saved_data)
+        success = monitor_one_cube(symbol, name, saved_data)
+        if success is False:
+            auth_failed = True
+            # 如果 Cookie 失效，后续大概率也失败，可以考虑 break
+            break 
         time.sleep(1)
 
     # 循环结束后再次保存，确保安全
     save_data_to_db(DB_KEY_STATUS, saved_data)
+    
+    if auth_failed:
+        print("❌ 监测到 Cookie 失效或认证错误，标记 Action 为失败")
+        sys.exit(1)
 
 if __name__ == "__main__":
     main()
