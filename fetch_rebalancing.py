@@ -3,6 +3,7 @@ import json
 import os
 import time
 import sys
+from requests.utils import cookiejar_from_dict
 
 # --- 配置区域 ---
 def load_cube_config():
@@ -28,7 +29,15 @@ DB_KEY_STATUS = 'xueqiu:status:last_ids'
 HISTORY_LIMIT = 200
 
 # Cookie 失效报警间隔 (3天)
-COOKIE_ALERT_INTERVAL = 86400 
+COOKIE_ALERT_INTERVAL = 86400
+
+# ── [诊断开关] ─────────────────────────────────────────────────────────────
+# 设为 True 时，每次运行后会检查 Session Cookie 是否有变化，
+# 若有变化则在 Redis 里存一条带时间戳的快照（最多保留 10 个版本）。
+# 目的：验证雪球是否会通过 Set-Cookie 更新 Cookie。
+# 确认结论后可直接删除本开关及相关函数。
+ENABLE_COOKIE_DIAGNOSTICS = True
+# ─────────────────────────────────────────────────────────────────────────────
 
 # --- 环境变量获取 ---
 COOKIE_STR = os.environ.get("XUEQIU_COOKIE")
@@ -298,27 +307,66 @@ def monitor_one_cube(symbol, full_name, saved_data):
         return True # 异常不因单个失败而中断整体（除非是Cookie问题）
 
 def init_session():
-    """初始化全局 Session，加载 Cookies"""
-    from requests.utils import cookiejar_from_dict
-    
-    # 1. 解析 Secrets 中的基础 Cookie String -> Dict
-    # 这些是“底包”，包含核心身份信息
+    """初始化全局 Session，仅从 Secrets 加载 Cookie（不再从 Redis 加载）"""
     initial_cookies = {}
     if COOKIE_STR:
         for item in COOKIE_STR.split(';'):
             if '=' in item:
                 k, v = item.strip().split('=', 1)
                 initial_cookies[k] = v
-    
-    # 2. 尝试从 Redis 加载“最新”的动态 Cookie
-    # 这些是“补丁”，包含最新的风控令牌(acw_tc等)，会覆盖底包里的旧值
-    redis_cookies = get_cookies_from_db()
-    if redis_cookies:
-        print("✅ 从数据库加载了持久化 Cookies")
-        initial_cookies.update(redis_cookies)
-    
-    # 3. 装载到 Session
     SESSION.cookies = cookiejar_from_dict(initial_cookies)
+
+# ── [诊断功能] 以下函数仅在 ENABLE_COOKIE_DIAGNOSTICS=True 时生效 ─────────────
+
+def _get_last_cookie_snapshot():
+    """读取上次记录的 Cookie 快照（用于对比）"""
+    url = f"{UPSTASH_URL}/get/xueqiu:cookie_debug:latest"
+    headers = {"Authorization": f"Bearer {UPSTASH_TOKEN}"}
+    try:
+        resp = requests.get(url, headers=headers)
+        result = resp.json().get('result')
+        return json.loads(result) if result else {}
+    except Exception as e:
+        print(f"[Cookie诊断] 读取快照失败: {e}")
+        return {}
+
+def check_and_record_cookie_snapshot():
+    """
+    检查本次运行后 Session Cookie 是否有变化。
+    若有变化，将新快照（含北京时间 + 变化的 key 列表）写入 Redis：
+      xueqiu:cookie_debug:latest  <- 最新一条
+      xueqiu:cookie_debug:history <- LPUSH 历史，最多保留 10 条
+    """
+    SENSITIVE = {"xq_a_token", "xqat", "u", "xq_id_token", "xq_r_token"}
+    current = {k: v for k, v in requests.utils.dict_from_cookiejar(SESSION.cookies).items()
+               if k not in SENSITIVE}
+    if not current:
+        return
+
+    last = _get_last_cookie_snapshot().get("cookies", {})
+    if current == last:
+        print("ℹ️ [Cookie诊断] Cookie 无变化")
+        return
+
+    changed = [k for k in current if current.get(k) != last.get(k)]
+    new_keys = [k for k in current if k not in last]
+    bj_time = time.strftime("%Y-%m-%d %H:%M:%S (北京)", time.gmtime(time.time() + 28800))
+
+    snapshot = {
+        "recorded_at": bj_time,
+        "changed_keys": changed,
+        "new_keys": new_keys,
+        "cookies": current,
+    }
+    h = {"Authorization": f"Bearer {UPSTASH_TOKEN}"}
+    payload = json.dumps(snapshot)
+    requests.post(f"{UPSTASH_URL}/set/xueqiu:cookie_debug:latest", headers=h, data=payload)
+    requests.post(f"{UPSTASH_URL}/lpush/xueqiu:cookie_debug:history", headers=h, data=payload)
+    requests.post(f"{UPSTASH_URL}/ltrim/xueqiu:cookie_debug:history/0/9", headers=h)
+    print(f"✅ [Cookie诊断] Cookie 有变化，已记录快照 @ {bj_time}")
+    print(f"   变化的 key: {changed}")
+
+# ─────────────────────────────────────────────────────────────────────────────
 
 def run_monitor_loop(saved_data):
     """执行监控主循环 (返回: 是否遇到严重错误)"""
@@ -334,17 +382,20 @@ def run_monitor_loop(saved_data):
 def main():
     # 1. 初始化鉴权
     init_session()
-    
+
     # 2. 读取历史状态
     saved_data = get_data_from_db(DB_KEY_STATUS)
-    
+
     # 3. 开始轮询
     auth_failed = run_monitor_loop(saved_data)
 
-    # 4. 收尾保存
+    # 4. 收尾
     save_data_to_db(DB_KEY_STATUS, saved_data)
-    save_cookies_to_db() # 只有成功执行完才值得保存新Cookie
-    
+
+    # [诊断] 检查 Cookie 是否被服务器更新（可随时关闭）
+    if ENABLE_COOKIE_DIAGNOSTICS:
+        check_and_record_cookie_snapshot()
+
     # 5. 错误处理
     if auth_failed:
         print("❌ 监测到 Cookie 失效或认证错误，标记 Action 为失败")
