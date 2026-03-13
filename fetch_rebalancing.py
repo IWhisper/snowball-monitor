@@ -265,9 +265,9 @@ def monitor_one_cube(symbol, full_name, saved_data):
                         target_w = stock.get('target_weight') or 0.0
                         change = target_w - prev_w
                         
-                        action = "系统" if category == 'sys_rebalancing' else ("买入" if change > 0 else "卖出")
-                        if abs(change) > 0.1:
-                            msg_lines.append(f"{action} {name}: {prev_w}% -> {target_w}%")
+                        action = "⚪️ 系统" if category == 'sys_rebalancing' else ("🟢 买入" if change > 0 else "🔴 卖出")
+                        if abs(change) > 0.01:
+                            msg_lines.append(f"{action} {name}: {prev_w:.2f}% -> {target_w:.2f}% ({change:+.2f}%)")
                     
                     # --- 3. 生成正文 (Msg Body) ---
                     msg_body = "\n".join(msg_lines)
@@ -286,7 +286,7 @@ def monitor_one_cube(symbol, full_name, saved_data):
                         send_bark(title, msg_body, symbol)
                     else:
                         # 只有表头，说明全是微调
-                        msg_body += "\n(微调仓，变动幅度均 < 0.1%)"
+                        msg_body += "\n(微调仓，变动幅度均 < 0.01%)"
                     
                     # --- 5. 存入历史 ---
                     latest_trade['summary_text'] = msg_body
