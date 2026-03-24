@@ -64,7 +64,7 @@ SESSION.headers.update({
     'Referer': 'https://xueqiu.com/'
 })
 
-def send_bark(title, body, symbol=None):
+def send_bark(title, body, symbol=None, subtitle=None):
     """发送 Bark 通知 (POST 方式 + 强制保存历史)"""
     payload = {
         'title': title,
@@ -73,6 +73,8 @@ def send_bark(title, body, symbol=None):
         'group': '雪球调仓',
         'isArchive': 1, # 1=保存历史消息
     }
+    if subtitle:
+        payload['subtitle'] = subtitle
     if symbol:
         payload['url'] = f"https://xueqiu.com/P/{symbol}"
     
@@ -252,12 +254,12 @@ def monitor_one_cube(symbol, full_name, saved_data):
                     else:
                         time_str = "未知"
                     
-                    # --- 2. 构造消息行 ---
-                    msg_lines = []
-                    msg_lines.append(header_line)
-                    msg_lines.append(f"⏰时间(北京): {time_str}")
-                    msg_lines.append("------------------")
+                    # --- 2. 构造消息 ---
+                    # 副标题：主理人 + 时间 (节省正文空间)
+                    # 时间为北京时间
+                    subtitle = f"{header_line} | ⏰{time_str}"
                     
+                    msg_lines = []
                     stocks = latest_trade.get('rebalancing_histories', [])
                     for stock in stocks:
                         name = stock.get('stock_name', stock.get('stock_symbol', '未知'))
@@ -274,7 +276,7 @@ def monitor_one_cube(symbol, full_name, saved_data):
                     
                     # --- 4. 发送逻辑 (Bark) ---
                     # 判断依据：除了表头(3行)之外有变动，或者特殊类别，或者状态发生变更(pending->success)
-                    if len(msg_lines) > 3 or category == 'sys_rebalancing' or '❓' in status_str or is_status_update:
+                    if len(msg_lines) > 0 or category == 'sys_rebalancing' or '❓' in status_str or is_status_update:
                         # 特殊备注
                         if category == 'sys_rebalancing':
                             msg_body += "\n(系统自动触发，非主理人操作)"
@@ -283,7 +285,7 @@ def monitor_one_cube(symbol, full_name, saved_data):
                         elif is_status_update:
                              msg_body += f"\n(状态更新: {last_status} -> {current_status})"
                         
-                        send_bark(title, msg_body, symbol)
+                        send_bark(title, msg_body, symbol, subtitle=subtitle)
                     else:
                         # 只有表头，说明全是微调
                         msg_body += "\n(微调仓，变动幅度均 < 0.01%)"
