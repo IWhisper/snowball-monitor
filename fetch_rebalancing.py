@@ -226,10 +226,10 @@ def monitor_one_cube(symbol, full_name, saved_data):
                     # --- 1. 统一处理标题和表头 ---
                     if " - " in full_name:
                         cube_name, manager = full_name.split(" - ", 1)
-                        header_line = f"👤主理人: {manager}"
+                        header_line = f"👤{manager}"
                     else:
                         cube_name = full_name
-                        header_line = f"📦组合: {full_name}"
+                        header_line = f"📦{cube_name}"
                     
                     # --- 状态判定 ---
                     category = latest_trade.get('category', 'unknown')
